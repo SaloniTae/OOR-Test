@@ -20,7 +20,7 @@
       background: #020617;
       border-radius: 12px;
       padding: 24px 20px;
-      max-width: 420px;
+      max-width: 480px;
       width: 100%;
       box-shadow: 0 20px 40px rgba(0,0,0,0.4);
       border: 1px solid #1e293b;
@@ -54,20 +54,28 @@
       box-shadow: 0 0 0 1px #38bdf8;
     }
     button {
-      margin-top: 14px;
-      width: 100%;
-      padding: 10px 12px;
+      padding: 9px 12px;
       border-radius: 8px;
       border: none;
       background: linear-gradient(135deg, #06b6d4, #3b82f6);
       color: white;
       font-weight: 600;
       cursor: pointer;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
     }
     button:disabled {
       opacity: 0.6;
       cursor: wait;
+    }
+    .btn-secondary {
+      background: #0f172a;
+      border: 1px solid #4b5563;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
     }
     .message {
       margin-top: 12px;
@@ -94,10 +102,33 @@
     .value {
       color: #e5e7eb;
       font-weight: 500;
+      word-break: break-word;
     }
     small {
       font-size: 0.75rem;
       color: #6b7280;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: #0f172a;
+      border: 1px solid #1f2937;
+      color: #e5e7eb;
+      margin-left: 6px;
+    }
+    .section-title {
+      margin-top: 14px;
+      margin-bottom: 4px;
+      font-size: 0.9rem;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.85rem;
     }
   </style>
 </head>
@@ -111,7 +142,7 @@
     <form id="loginForm">
       <label for="code">Order ID / Code</label>
       <input id="code" name="code" type="text" required placeholder="OORXXXXXXXXXXXX" />
-      <button type="submit" id="submitBtn">View Details</button>
+      <button type="submit" id="submitBtn" style="margin-top:10px;width:100%;">View Details</button>
     </form>
 
     <div id="message" class="message"></div>
@@ -124,6 +155,7 @@
       <div class="item">
         <span class="label">Plan:</span>
         <span class="value" id="slotName"></span>
+        <span class="pill" id="labelMode" style="display:none;"></span>
       </div>
       <div class="item">
         <span class="label">Email / Username:</span>
@@ -138,24 +170,194 @@
         <span class="value" id="endTime"></span>
       </div>
       <small id="meta"></small>
+
+      <div class="section-title">Actions</div>
+      <div class="row" id="actionsRow"></div>
+
+      <div id="extraInfo" style="margin-top:10px;font-size:0.85rem;"></div>
     </div>
   </div>
 
   <script>
+    let CURRENT_CODE = null;
+    let CURRENT_ACTIONS = null;
+    let CURRENT_INVITE = null;
+
     const form = document.getElementById("loginForm");
     const messageEl = document.getElementById("message");
     const resultEl = document.getElementById("result");
     const submitBtn = document.getElementById("submitBtn");
+    const actionsRow = document.getElementById("actionsRow");
+    const extraInfoEl = document.getElementById("extraInfo");
 
-    form.addEventListener("submit", async (e) => {
+    function showMessage(text, type = "") {
+      messageEl.textContent = text || "";
+      messageEl.className = "message" + (type ? " " + type : "");
+    }
+
+    function setButtonsDisabled(disabled) {
+      const btns = actionsRow.querySelectorAll("button");
+      btns.forEach(b => (b.disabled = disabled));
+    }
+
+    function renderActions() {
+      actionsRow.innerHTML = "";
+      extraInfoEl.textContent = "";
+
+      if (!CURRENT_CODE || !CURRENT_ACTIONS) return;
+
+      const { refresh_enabled, otp_enabled, code_enabled, invite_enabled } =
+        CURRENT_ACTIONS;
+
+      if (!refresh_enabled && !otp_enabled && !code_enabled && !invite_enabled) {
+        extraInfoEl.textContent = "No extra actions available for this platform.";
+        return;
+      }
+
+      if (refresh_enabled) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Refresh Password";
+        btn.className = "btn-secondary";
+        btn.onclick = () => doRefresh();
+        actionsRow.appendChild(btn);
+      }
+
+      if (otp_enabled) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Get OTP";
+        btn.className = "btn-secondary";
+        btn.onclick = () => doGetOtp();
+        actionsRow.appendChild(btn);
+      }
+
+      if (code_enabled) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Get Code";
+        btn.className = "btn-secondary";
+        btn.onclick = () => doGetCode();
+        actionsRow.appendChild(btn);
+      }
+
+      if (invite_enabled && CURRENT_INVITE) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Join Now";
+        btn.onclick = () => {
+          window.open(CURRENT_INVITE, "_blank");
+        };
+        actionsRow.appendChild(btn);
+      }
+
+      const buyBtn = document.createElement("button");
+      buyBtn.type = "button";
+      buyBtn.textContent = "Buy Again";
+      buyBtn.onclick = () => {
+        // put your Telegram / website link:
+        window.open("https://t.me/ott_on_rent", "_blank");
+      };
+      actionsRow.appendChild(buyBtn);
+    }
+
+    async function doRefresh() {
+      if (!CURRENT_CODE) return;
+      showMessage("", "");
+      extraInfoEl.textContent = "Refreshing credentials...";
+      setButtonsDisabled(true);
+
+      try {
+        const resp = await fetch("/account/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: CURRENT_CODE })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+          extraInfoEl.textContent = data.message || "Could not refresh.";
+          return;
+        }
+
+        document.getElementById("email").textContent = data.email || "-";
+        document.getElementById("password").textContent = data.password || "-";
+        extraInfoEl.textContent = data.message || "Credentials refreshed.";
+      } catch (err) {
+        console.error(err);
+        extraInfoEl.textContent = "Server error while refreshing.";
+      } finally {
+        setButtonsDisabled(false);
+      }
+    }
+
+    async function doGetOtp() {
+      if (!CURRENT_CODE) return;
+      showMessage("", "");
+      extraInfoEl.textContent = "Getting OTP...";
+      setButtonsDisabled(true);
+
+      try {
+        const resp = await fetch("/account/get-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: CURRENT_CODE })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+          extraInfoEl.textContent = data.message || "Could not get OTP.";
+          return;
+        }
+
+        extraInfoEl.textContent = `OTP: ${data.otp} (valid for ~${data.ttl}s)`;
+      } catch (err) {
+        console.error(err);
+        extraInfoEl.textContent = "Server error while fetching OTP.";
+      } finally {
+        setButtonsDisabled(false);
+      }
+    }
+
+    async function doGetCode() {
+      if (!CURRENT_CODE) return;
+      showMessage("", "");
+      extraInfoEl.textContent = "Getting sign-in code...";
+      setButtonsDisabled(true);
+
+      try {
+        const resp = await fetch("/account/get-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: CURRENT_CODE })
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.success === false) {
+          extraInfoEl.textContent = data.message || "Could not get code.";
+          return;
+        }
+
+        if (!data.code) {
+          extraInfoEl.textContent = data.message || "No sign-in code found yet.";
+        } else {
+          extraInfoEl.textContent = `Sign-in code: ${data.code}`;
+        }
+      } catch (err) {
+        console.error(err);
+        extraInfoEl.textContent = "Server error while fetching code.";
+      } finally {
+        setButtonsDisabled(false);
+      }
+    }
+
+    form.addEventListener("submit", async e => {
       e.preventDefault();
       const codeInput = document.getElementById("code");
       const code = codeInput.value.trim();
       if (!code) return;
 
-      messageEl.textContent = "";
-      messageEl.className = "message";
+      showMessage("", "");
       resultEl.style.display = "none";
+      actionsRow.innerHTML = "";
+      extraInfoEl.textContent = "";
       submitBtn.disabled = true;
 
       try {
@@ -168,29 +370,44 @@
         const data = await resp.json();
 
         if (!resp.ok || !data.success) {
-          messageEl.textContent = data.message || "Invalid or expired code.";
-          messageEl.className = "message error";
-          submitBtn.disabled = false;
+          showMessage(data.message || "Invalid or expired code.", "error");
+          CURRENT_CODE = null;
+          CURRENT_ACTIONS = null;
+          CURRENT_INVITE = null;
           return;
         }
 
-        // Success
-        messageEl.textContent = "Login details loaded.";
-        messageEl.className = "message success";
+        CURRENT_CODE = data.code;
+        CURRENT_ACTIONS = data.actions || null;
+        CURRENT_INVITE = data.invite_link || null;
+
+        showMessage("Login details loaded.", "success");
 
         document.getElementById("platform").textContent = data.platform || "-";
         document.getElementById("slotName").textContent = data.slot_name || "-";
         document.getElementById("email").textContent = data.last_email || "-";
         document.getElementById("password").textContent = data.last_password || "-";
         document.getElementById("endTime").textContent = data.end_time || "-";
+
+        const labelModeEl = document.getElementById("labelMode");
+        if (data.label_mode) {
+          labelModeEl.style.display = "inline-block";
+          labelModeEl.textContent = data.label_mode;
+        } else {
+          labelModeEl.style.display = "none";
+        }
+
         document.getElementById("meta").textContent =
           "Code: " + (data.code || "") + " • User ID: " + (data.user_id || "N/A");
 
         resultEl.style.display = "block";
+        renderActions();
       } catch (err) {
         console.error(err);
-        messageEl.textContent = "Server error. Please try again later.";
-        messageEl.className = "message error";
+        showMessage("Server error. Please try again later.", "error");
+        CURRENT_CODE = null;
+        CURRENT_ACTIONS = null;
+        CURRENT_INVITE = null;
       } finally {
         submitBtn.disabled = false;
       }
