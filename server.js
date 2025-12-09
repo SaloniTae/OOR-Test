@@ -3,7 +3,10 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const admin = require("firebase-admin");
+const path = require("path");
+const crypto = require("crypto");
 
+// -------- ENV --------
 const {
   PORT = 3000,
   ADMIN_KEY,
@@ -11,7 +14,7 @@ const {
   FIREBASE_SERVICE_ACCOUNT
 } = process.env;
 
-// ---------- Firebase init ----------
+// -------- Firebase init --------
 if (!FIREBASE_DB_URL || !FIREBASE_SERVICE_ACCOUNT) {
   console.error("Missing FIREBASE_DB_URL or FIREBASE_SERVICE_ACCOUNT");
   process.exit(1);
@@ -31,18 +34,24 @@ admin.initializeApp({
 });
 
 const db = admin.database();
+
+// -------- Express init --------
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---------- Helpers ----------
+// Static files (public/index.html => /, public/admin.html => /admin.html)
+app.use(express.static(path.join(__dirname, "public")));
 
+// -------- Helpers --------
 function nowIso() {
   return new Date().toISOString();
 }
+
 function istNow() {
-  return new Date(); // if you want strict IST, add timezone lib; for now system time
+  return new Date(); // if you want strict IST, switch to tz lib
 }
+
 function formatDateTime(now) {
   const pad = n => String(n).padStart(2, "0");
   const y = now.getFullYear();
@@ -53,12 +62,14 @@ function formatDateTime(now) {
   const ss = pad(now.getSeconds());
   return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
 }
+
 function parseEndTime(endStr) {
   if (!endStr) return null;
   const d = new Date(endStr);
   if (isNaN(d.getTime())) return null;
   return d;
 }
+
 function requireAdmin(req, res, next) {
   const key = req.header("X-ADMIN-KEY");
   if (!ADMIN_KEY || key !== ADMIN_KEY) {
@@ -67,9 +78,9 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// map like Python’s _resolve_mode
+// like Python _resolve_mode for approve_flow_label_mode
 function resolveLabelMode(uiFlags, scope) {
-  const key = `${scope}_label_mode`; // e.g. approve_flow_label_mode
+  const key = `${scope}_label_mode`; // approve_flow_label_mode
   const modeRaw = (uiFlags && uiFlags[key]) || "";
   const mode = modeRaw.toString().trim().toLowerCase();
   if (mode === "platform" || mode === "name") return mode;
@@ -77,14 +88,13 @@ function resolveLabelMode(uiFlags, scope) {
   return legacy ? "platform" : "name";
 }
 
-// get slot info
 async function getSlot(slotId) {
   const snap = await db.ref(`settings/slots/${slotId}`).get();
   if (!snap.exists()) return null;
   return snap.val();
 }
 
-// helper: scan top-level for credentials like cred2, cred3...
+// Scan DB for credentials like cred2, cred3...
 async function selectCredentialForSlot(slotId, slotInfo) {
   const rootSnap = await db.ref("/").get();
   const root = rootSnap.val() || {};
@@ -92,10 +102,13 @@ async function selectCredentialForSlot(slotId, slotInfo) {
   const slotPlatform = (slotInfo.platform || "").toLowerCase();
   const today = new Date();
 
-  const _normalizeOwns = val => {
+  const normalizeOwns = val => {
     if (!val) return [];
     if (Array.isArray(val)) return val;
-    return String(val).split(",").map(v => v.trim()).filter(Boolean);
+    return String(val)
+      .split(",")
+      .map(v => v.trim())
+      .filter(Boolean);
   };
 
   const candidates = [];
@@ -104,16 +117,15 @@ async function selectCredentialForSlot(slotId, slotInfo) {
     if (typeof node !== "object" || node === null) continue;
 
     const ownsSlots = new Set(
-      _normalizeOwns(node.belongs_to_slot).map(v => v.toLowerCase())
+      normalizeOwns(node.belongs_to_slot).map(v => v.toLowerCase())
     );
     const ownsPlats = new Set(
-      _normalizeOwns(node.belongs_to_platform).map(v => v.toLowerCase())
+      normalizeOwns(node.belongs_to_platform).map(v => v.toLowerCase())
     );
 
     const appliesSlot = ownsSlots.has(slotId.toLowerCase());
     const appliesPlat = slotPlatform && ownsPlats.has(slotPlatform);
-    const appliesAll =
-      ownsSlots.has("all") || ownsPlats.has("all");
+    const appliesAll = ownsSlots.has("all") || ownsPlats.has("all");
 
     if (!appliesSlot && !appliesPlat && !appliesAll) continue;
 
@@ -131,14 +143,13 @@ async function selectCredentialForSlot(slotId, slotInfo) {
     if (locked === 1) continue;
     if (maxUsage !== 0 && usageCount >= maxUsage) continue;
 
-    // expiry_date "YYYY-MM-DD"
     if (node.expiry_date) {
       try {
         const [y, m, d] = node.expiry_date.split("-").map(x => parseInt(x, 10));
-        const exp = new Date(y, m - 1, d + 1); // end of day
+        const exp = new Date(y, m - 1, d + 1); // end-of-day
         if (exp < today) continue;
       } catch {
-        // ignore parse error
+        // ignore
       }
     }
 
@@ -153,7 +164,6 @@ async function selectCredentialForSlot(slotId, slotInfo) {
 
   if (!candidates.length) return { key: null, node: null };
 
-  // priority: slot > platform > all
   let best = candidates.find(c => c.appliesSlot);
   if (!best) best = candidates.find(c => c.appliesPlat);
   if (!best) best = candidates.find(c => c.appliesAll);
@@ -162,7 +172,7 @@ async function selectCredentialForSlot(slotId, slotInfo) {
   return { key: best.key, node: best.node };
 }
 
-// claim_promo_code_atomic in Node
+// claim_promo_code_atomic equivalent
 async function claimPromoCodeAtomic(code, userId, maxRetries = 4) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const snap = await db.ref(`promo_codes/${code}`).get();
@@ -228,16 +238,79 @@ async function claimPromoCodeAtomic(code, userId, maxRetries = 4) {
   return [false, "RACE_FAILED"];
 }
 
-// ---------- Routes ----------
+// ----- TOTP helpers (for Get OTP) -----
+function base32ToBuffer(secret) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const clean = secret.replace(/[\s=]/g, "").toUpperCase();
+  let bits = "";
+  for (const ch of clean) {
+    const val = alphabet.indexOf(ch);
+    if (val === -1) continue;
+    bits += val.toString(2).padStart(5, "0");
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
 
+function generateTotp(secret, step = 30, digits = 6) {
+  const key = base32ToBuffer(secret);
+  const time = Math.floor(Date.now() / 1000 / step);
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(BigInt(time));
+
+  const hmac = crypto.createHmac("sha1", key).update(buf).digest();
+  const offset = hmac[hmac.length - 1] & 0xf;
+  let codeInt =
+    ((hmac[offset] & 0x7f) << 24) |
+    ((hmac[offset + 1] & 0xff) << 16) |
+    ((hmac[offset + 2] & 0xff) << 8) |
+    (hmac[offset + 3] & 0xff);
+
+  codeInt = codeInt % 10 ** digits;
+  const codeStr = codeInt.toString().padStart(digits, "0");
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rem = step - (nowSec % step);
+  return { code: codeStr, ttl: rem };
+}
+
+// -------- Routes --------
+
+// Health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", time: nowIso() });
 });
 
-// Admin generate code (slot-based, like Telegram)
+// Admin: list slots for UI
+app.get("/admin/slots", requireAdmin, async (req, res) => {
+  try {
+    const snap = await db.ref("settings/slots").get();
+    if (!snap.exists()) {
+      return res.json({ success: true, slots: [] });
+    }
+    const raw = snap.val();
+    const slots = Object.entries(raw).map(([id, data]) => ({
+      id,
+      name: data.name || id,
+      platform: data.platform || null,
+      amount: data.required_amount || null,
+      enabled: data.enabled !== false
+    }));
+    res.json({ success: true, slots });
+  } catch (err) {
+    console.error("Error in /admin/slots:", err);
+    res.status(500).json({ success: false, message: "Internal error" });
+  }
+});
+
+// Admin: generate promo code (slot-based, like /gen_code)
 app.post("/admin/gen-code", requireAdmin, async (req, res) => {
   try {
-    const { slotId, maxUses = 1, expiresAt = null, customCode = null, createdBy = "admin" } = req.body || {};
+    const { slotId, maxUses = 1, expiresAt = null, customCode = null, createdBy = "admin" } =
+      req.body || {};
     if (!slotId) {
       return res.status(400).json({ success: false, message: "slotId is required" });
     }
@@ -255,7 +328,9 @@ app.post("/admin/gen-code", requireAdmin, async (req, res) => {
     if (customCode) {
       const custom = customCode.trim().toUpperCase();
       if (!/^OOR[A-Z0-9]{6,20}$/.test(custom)) {
-        return res.status(400).json({ success: false, message: "Invalid custom code format" });
+        return res
+          .status(400)
+          .json({ success: false, message: "customCode must match OOR[A-Z0-9]{6,20}" });
       }
       const existing = await db.ref(`promo_codes/${custom}`).get();
       if (existing.exists()) {
@@ -305,8 +380,7 @@ app.post("/admin/gen-code", requireAdmin, async (req, res) => {
   }
 });
 
-// User: redeem promo code (like /use_code)
-// This will create transaction and assign credential
+// User: redeem promo code (like /use_code) -> create transaction + assign cred
 app.post("/promo/claim", async (req, res) => {
   try {
     const { code, user_id } = req.body || {};
@@ -315,7 +389,6 @@ app.post("/promo/claim", async (req, res) => {
     }
     const codeText = code.trim().toUpperCase();
 
-    // claim promo atomically
     const [ok, result] = await claimPromoCodeAtomic(codeText, user_id);
     if (!ok) {
       const msgMap = {
@@ -325,7 +398,9 @@ app.post("/promo/claim", async (req, res) => {
         CODE_ALREADY_USED_UP: "This code has already been used.",
         RACE_FAILED: "Could not claim the code. Try again."
       };
-      return res.status(400).json({ success: false, reason: result, message: msgMap[result] || "Failed to claim code." });
+      return res
+        .status(400)
+        .json({ success: false, reason: result, message: msgMap[result] || "Failed to claim." });
     }
 
     const promo = result;
@@ -341,7 +416,7 @@ app.post("/promo/claim", async (req, res) => {
 
     const uiSnap = await db.ref("settings/ui_flags").get();
     const uiFlags = uiSnap.val() || {};
-    const labelMode = resolveLabelMode(uiFlags, "approve_flow"); // "platform" or "name"
+    const labelMode = resolveLabelMode(uiFlags, "approve_flow");
 
     const now = istNow();
     let durationHours = 6;
@@ -384,7 +459,6 @@ app.post("/promo/claim", async (req, res) => {
 
     await db.ref(`transactions/${codeText}`).set(txnRecord);
 
-    // pick credential
     const { key: credKey, node: cred } = await selectCredentialForSlot(slotId, slot);
     if (!cred) {
       return res.json({
@@ -395,7 +469,6 @@ app.post("/promo/claim", async (req, res) => {
       });
     }
 
-    // update transaction with credentials
     const email = cred.email || null;
     const password = cred.password || null;
     await db.ref(`transactions/${codeText}`).update({
@@ -404,7 +477,6 @@ app.post("/promo/claim", async (req, res) => {
       last_password: password
     });
 
-    // increment usage_count
     let usageCount = parseInt(cred.usage_count ?? 0, 10);
     const maxUsage = parseInt(cred.max_usage ?? 0, 10);
     if (isNaN(usageCount)) usageCount = 0;
@@ -435,7 +507,7 @@ app.post("/promo/claim", async (req, res) => {
   }
 });
 
-// User login by existing transaction code (view credentials)
+// User login: view transaction details + platform_actions + invite_link
 app.post("/user/login", async (req, res) => {
   try {
     const { code } = req.body || {};
@@ -450,18 +522,69 @@ app.post("/user/login", async (req, res) => {
     }
 
     const trx = snap.val();
+
     if (trx.hidden === true) {
       return res.status(403).json({ success: false, message: "This code is no longer active" });
     }
     const endTime = parseEndTime(trx.end_time);
     if (endTime && endTime.getTime() < Date.now()) {
-      return res.status(403).json({ success: false, message: "This subscription has expired", expired: true });
+      return res.status(403).json({
+        success: false,
+        message: "This subscription has expired",
+        expired: true
+      });
+    }
+
+    let platform = trx.platform || null;
+    const slotId = trx.slot_id || null;
+    let slot = null;
+
+    if (slotId) {
+      slot = await getSlot(slotId);
+      if (!platform && slot && slot.platform) {
+        platform = slot.platform;
+      }
+    }
+
+    let actionsConf = {};
+    try {
+      const actsSnap = await db.ref("settings/platform_actions").get();
+      const root = actsSnap.val() || {};
+      if (platform && root[platform]) {
+        actionsConf = root[platform];
+      } else if (root.default) {
+        actionsConf = root.default;
+      }
+    } catch {
+      actionsConf = {};
+    }
+
+    const actions = {
+      refresh_enabled: !!actionsConf.refresh_enabled,
+      otp_enabled: !!actionsConf.otp_enabled,
+      code_enabled: !!actionsConf.code_enabled,
+      invite_enabled: !!actionsConf.invite_enabled
+    };
+
+    let inviteLink = null;
+    if (actions.invite_enabled) {
+      inviteLink =
+        trx.invite_link_short ||
+        trx.invite_link_long ||
+        null;
+      if (!inviteLink && trx.assign_to) {
+        const credSnap = await db.ref(trx.assign_to).get();
+        const cred = credSnap.val() || {};
+        if (cred.invite_link) {
+          inviteLink = cred.invite_link;
+        }
+      }
     }
 
     return res.json({
       success: true,
       code: normCode,
-      platform: trx.platform || null,
+      platform: platform || null,
       slot_id: trx.slot_id || null,
       slot_name: trx.slot_name || null,
       headline: trx.headline || null,
@@ -470,15 +593,267 @@ app.post("/user/login", async (req, res) => {
       start_time: trx.start_time || null,
       end_time: trx.end_time || null,
       user_id: trx.user_id || null,
-      label_mode: trx.label_mode || null
+      label_mode: trx.label_mode || null,
+      actions,
+      invite_link: inviteLink
     });
   } catch (err) {
-    console.error("Error /user/login:", err);
+    console.error("Error in /user/login:", err);
+    return res.status(500).json({ success: false, message: "Internal error" });
+  }
+});
+
+// Account: refresh credentials (like Refresh button)
+app.post("/account/refresh", async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) {
+      return res.status(400).json({ success: false, message: "code is required" });
+    }
+
+    const normCode = code.trim().toUpperCase();
+    const snap = await db.ref(`transactions/${normCode}`).get();
+    if (!snap.exists()) {
+      return res.status(404).json({ success: false, message: "Invalid code" });
+    }
+    const trx = snap.val();
+
+    const endTime = parseEndTime(trx.end_time);
+    if (endTime && endTime.getTime() < Date.now()) {
+      return res.status(403).json({ success: false, message: "Your access has expired" });
+    }
+
+    const credKey = trx.assign_to;
+    if (!credKey) {
+      return res.status(400).json({ success: false, message: "No credential assigned yet" });
+    }
+
+    const credSnap = await db.ref(credKey).get();
+    if (!credSnap.exists()) {
+      return res.status(404).json({ success: false, message: "Credential not found" });
+    }
+
+    const cred = credSnap.val();
+    const newEmail = cred.email || "";
+    const newPassword = cred.password || "";
+
+    const lastEmail = trx.last_email || "";
+    const lastPassword = trx.last_password || "";
+
+    if (newEmail === lastEmail && newPassword === lastPassword) {
+      return res.json({
+        success: false,
+        unchanged: true,
+        message: "No change in credentials",
+        email: newEmail,
+        password: newPassword
+      });
+    }
+
+    await db.ref(`transactions/${normCode}`).update({
+      last_email: newEmail,
+      last_password: newPassword
+    });
+
+    return res.json({
+      success: true,
+      message: "Credentials refreshed",
+      email: newEmail,
+      password: newPassword
+    });
+  } catch (err) {
+    console.error("Error in /account/refresh:", err);
     res.status(500).json({ success: false, message: "Internal error" });
   }
 });
 
-// ---------- Start ----------
+// Account: get OTP (TOTP) for this credential
+app.post("/account/get-otp", async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) {
+      return res.status(400).json({ success: false, message: "code is required" });
+    }
+
+    const normCode = code.trim().toUpperCase();
+    const snap = await db.ref(`transactions/${normCode}`).get();
+    if (!snap.exists()) {
+      return res.status(404).json({ success: false, message: "Invalid code" });
+    }
+    const trx = snap.val();
+
+    const endTime = parseEndTime(trx.end_time);
+    if (endTime && endTime.getTime() < Date.now()) {
+      return res.status(403).json({ success: false, message: "Your access has expired" });
+    }
+
+    const credKey = trx.assign_to;
+    if (!credKey) {
+      return res.status(400).json({ success: false, message: "No credential assigned" });
+    }
+
+    const credSnap = await db.ref(credKey).get();
+    if (!credSnap.exists()) {
+      return res.status(404).json({ success: false, message: "Credential not found" });
+    }
+    const cred = credSnap.val();
+    const secret = (cred.secret || "").trim();
+    if (!secret) {
+      return res.status(400).json({ success: false, message: "No OTP secret configured" });
+    }
+
+    const { code: otp, ttl } = generateTotp(secret, 30, 6);
+
+    await db.ref(`transactions/${normCode}`).update({
+      otp_delivered: true
+    });
+
+    return res.json({
+      success: true,
+      otp,
+      ttl,
+      message: "OTP generated"
+    });
+  } catch (err) {
+    console.error("Error in /account/get-otp:", err);
+    res.status(500).json({ success: false, message: "Internal error" });
+  }
+});
+
+// Account: get code via OOR mail service (like Get Code)
+app.post("/account/get-code", async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) {
+      return res.status(400).json({ success: false, message: "code is required" });
+    }
+
+    const normCode = code.trim().toUpperCase();
+    const snap = await db.ref(`transactions/${normCode}`).get();
+    if (!snap.exists()) {
+      return res.status(404).json({ success: false, message: "Invalid code" });
+    }
+    const trx = snap.val();
+
+    const endTime = parseEndTime(trx.end_time);
+    if (endTime && endTime.getTime() < Date.now()) {
+      return res.status(403).json({ success: false, message: "Your access has expired" });
+    }
+
+    const credKey = trx.assign_to;
+    if (!credKey) {
+      return res.status(400).json({ success: false, message: "No credential assigned" });
+    }
+
+    const credSnap = await db.ref(credKey).get();
+    if (!credSnap.exists()) {
+      return res.status(404).json({ success: false, message: "Credential not found" });
+    }
+    const cred = credSnap.val();
+    const email = (cred.email || "").trim();
+    if (!email) {
+      return res.status(400).json({ success: false, message: "No email configured for this credential" });
+    }
+
+    let platform = (trx.platform || "").trim();
+    if (!platform && cred.belongs_to_platform) {
+      platform = cred.belongs_to_platform;
+    }
+    if (!platform) {
+      return res.status(400).json({ success: false, message: "No platform configured" });
+    }
+    const platformKey = platform.toLowerCase();
+
+    const pathRuntime = `runtime/code_windows/${platformKey}`;
+    const nodeSnap = await db.ref(pathRuntime).get();
+    const node = nodeSnap.val() || {};
+    const nowTs = Math.floor(Date.now() / 1000);
+    const windowUntil = parseInt(node.window_until || 0, 10);
+
+    if (windowUntil > nowTs) {
+      return res.status(429).json({
+        success: false,
+        message: "Code line busy, please try again in a few seconds"
+      });
+    }
+
+    await db.ref(pathRuntime).update({
+      window_until: nowTs + 90
+    });
+
+    let codeVal = null;
+    let attempts = 0;
+
+    const baseUrl = "https://oormail-services.by-oor.workers.dev/otp";
+
+    while (attempts < 3 && !codeVal) {
+      attempts += 1;
+      const url = new URL(baseUrl);
+      url.searchParams.set("mail", email);
+      url.searchParams.set("platform", platformKey);
+
+      let resp;
+      try {
+        resp = await fetch(url.toString());
+      } catch (e) {
+        console.error("[GetCode] HTTP error:", e);
+        break;
+      }
+
+      const text = await resp.text();
+      let payload;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = {};
+      }
+
+      const status = String(payload.status || "").toLowerCase();
+      if (status === "success") {
+        const c = String(payload.code || "").trim();
+        if (c) {
+          codeVal = c;
+          break;
+        } else {
+          break;
+        }
+      } else if (status === "not_found") {
+        if (attempts < 3) {
+          await new Promise(r => setTimeout(r, 1000 * attempts));
+          continue;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+
+    await db.ref(pathRuntime).update({ window_until: 0 });
+
+    if (!codeVal) {
+      return res.status(200).json({
+        success: false,
+        message: "No sign-in code found yet. Wait a bit and try again."
+      });
+    }
+
+    await db.ref(`transactions/${normCode}`).update({
+      code_delivered: true
+    });
+
+    return res.json({
+      success: true,
+      message: "Code fetched successfully",
+      code: codeVal
+    });
+  } catch (err) {
+    console.error("Error in /account/get-code:", err);
+    res.status(500).json({ success: false, message: "Internal error" });
+  }
+});
+
+// -------- Start server --------
 app.listen(PORT, () => {
   console.log(`API listening on port ${PORT}`);
 });
