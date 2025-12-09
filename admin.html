@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OTT On Rent – Admin Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #020617;
+      color: #e5e7eb;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+    }
+    .container {
+      margin-top: 32px;
+      width: 100%;
+      max-width: 960px;
+      padding: 0 16px 32px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 1.5rem;
+    }
+    p.subtitle {
+      margin: 0 0 20px;
+      font-size: 0.9rem;
+      color: #9ca3af;
+    }
+    .card {
+      background: #020617;
+      border-radius: 12px;
+      border: 1px solid #1f2937;
+      padding: 20px 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      margin-bottom: 4px;
+    }
+    input[type="text"],
+    input[type="number"],
+    input[type="datetime-local"],
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #4b5563;
+      background: #020617;
+      color: #e5e7eb;
+      outline: none;
+      font-size: 0.9rem;
+      margin-bottom: 10px;
+    }
+    input:focus, select:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px #38bdf8;
+    }
+    button {
+      padding: 9px 14px;
+      border-radius: 8px;
+      border: none;
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button.secondary {
+      background: #0f172a;
+      border: 1px solid #475569;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .col {
+      flex: 1 1 260px;
+    }
+    .message {
+      margin-top: 8px;
+      font-size: 0.85rem;
+    }
+    .message.error {
+      color: #fca5a5;
+    }
+    .message.success {
+      color: #bbf7d0;
+    }
+    .result {
+      font-size: 0.9rem;
+      margin-top: 8px;
+      border-top: 1px solid #1e293b;
+      padding-top: 8px;
+    }
+    pre {
+      background: #020617;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 0.8rem;
+      border: 1px solid #1f2937;
+      overflow-x: auto;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: #0f172a;
+      border: 1px solid #1f2937;
+      color: #e5e7eb;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Admin Panel</h1>
+    <p class="subtitle">
+      Generate <strong>platform-based</strong> and <strong>slot-based</strong> codes exactly like your Telegram bot.<br />
+      This talks directly to the same Firebase database.
+    </p>
+
+    <!-- Admin key card -->
+    <div class="card">
+      <label for="adminKey">Admin Key (X-ADMIN-KEY)</label>
+      <input id="adminKey" type="text" placeholder="Enter ADMIN_KEY from server env" />
+      <button id="saveAdminKeyBtn" class="secondary">Use This Key</button>
+      <div id="adminKeyMessage" class="message"></div>
+    </div>
+
+    <!-- Slot-based code generation -->
+    <div class="card">
+      <h2 style="margin-top:0;font-size:1.1rem;">Slot-based Code</h2>
+      <p class="subtitle" style="margin-bottom:10px;">
+        Select a slot from <code>settings/slots</code>. This mirrors your Telegram /gen_code slot menu.
+      </p>
+
+      <div class="row">
+        <div class="col">
+          <label for="slotSelect">Slot</label>
+          <select id="slotSelect">
+            <option value="">Loading slots...</option>
+          </select>
+        </div>
+        <div class="col">
+          <label for="slotMaxUses">Max Uses</label>
+          <input id="slotMaxUses" type="number" value="1" min="1" />
+        </div>
+        <div class="col">
+          <label for="slotExpiresAt">Expires At (optional)</label>
+          <input id="slotExpiresAt" type="datetime-local" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <label for="slotCustomCode">Custom Code (optional)</label>
+          <input id="slotCustomCode" type="text" placeholder="OORCUSTOMXXXX (or leave blank for random)" />
+        </div>
+      </div>
+
+      <button id="genSlotCodeBtn">Generate Slot-based Code</button>
+      <div id="slotMessage" class="message"></div>
+      <div id="slotResult" class="result" style="display:none;">
+        <div><strong>Code:</strong> <span id="slotCode"></span></div>
+        <div><strong>Slot:</strong> <span id="slotName"></span> <span id="slotPlatform" class="pill"></span></div>
+        <pre id="slotRaw"></pre>
+      </div>
+    </div>
+
+    <!-- Platform-based code generation -->
+    <div class="card">
+      <h2 style="margin-top:0;font-size:1.1rem;">Platform-based Code</h2>
+      <p class="subtitle" style="margin-bottom:10px;">
+        Use when you just want a code tied to a platform (like Canva) instead of a specific slot.
+      </p>
+
+      <div class="row">
+        <div class="col">
+          <label for="platformName">Platform Name</label>
+          <input id="platformName" type="text" placeholder="Canva, Netflix, etc." />
+        </div>
+        <div class="col">
+          <label for="platMaxUses">Max Uses</label>
+          <input id="platMaxUses" type="number" value="1" min="1" />
+        </div>
+        <div class="col">
+          <label for="platExpiresAt">Expires At (optional)</label>
+          <input id="platExpiresAt" type="datetime-local" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <label for="platCustomCode">Custom Code (optional)</label>
+          <input id="platCustomCode" type="text" placeholder="OORCUSTOMXXXX (or leave blank for random)" />
+        </div>
+      </div>
+
+      <button id="genPlatCodeBtn">Generate Platform-based Code</button>
+      <div id="platMessage" class="message"></div>
+      <div id="platResult" class="result" style="display:none;">
+        <div><strong>Code:</strong> <span id="platCode"></span></div>
+        <div><strong>Platform:</strong> <span id="platPlatform"></span></div>
+        <pre id="platRaw"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ADMIN_KEY_VALUE = "";
+
+    const adminKeyInput = document.getElementById("adminKey");
+    const adminKeyMessage = document.getElementById("adminKeyMessage");
+    const saveAdminKeyBtn = document.getElementById("saveAdminKeyBtn");
+
+    const slotSelect = document.getElementById("slotSelect");
+    const slotMaxUsesInput = document.getElementById("slotMaxUses");
+    const slotExpiresAtInput = document.getElementById("slotExpiresAt");
+    const slotCustomCodeInput = document.getElementById("slotCustomCode");
+    const genSlotCodeBtn = document.getElementById("genSlotCodeBtn");
+    const slotMessage = document.getElementById("slotMessage");
+    const slotResult = document.getElementById("slotResult");
+    const slotCodeEl = document.getElementById("slotCode");
+    const slotNameEl = document.getElementById("slotName");
+    const slotPlatformEl = document.getElementById("slotPlatform");
+    const slotRawEl = document.getElementById("slotRaw");
+
+    const platformNameInput = document.getElementById("platformName");
+    const platMaxUsesInput = document.getElementById("platMaxUses");
+    const platExpiresAtInput = document.getElementById("platExpiresAt");
+    const platCustomCodeInput = document.getElementById("platCustomCode");
+    const genPlatCodeBtn = document.getElementById("genPlatCodeBtn");
+    const platMessage = document.getElementById("platMessage");
+    const platResult = document.getElementById("platResult");
+    const platCodeEl = document.getElementById("platCode");
+    const platPlatformEl = document.getElementById("platPlatform");
+    const platRawEl = document.getElementById("platRaw");
+
+    function formatDateTimeLocal(value) {
+      if (!value) return null;
+      // value like "2025-12-31T23:59"
+      // convert to ISO with local timezone as text
+      const d = new Date(value);
+      if (isNaN(d.getTime())) return null;
+      return d.toISOString(); // or keep as is if you prefer
+    }
+
+    function showMessage(el, text, type = "") {
+      el.textContent = text || "";
+      el.className = "message" + (type ? " " + type : "");
+    }
+
+    // Save admin key in memory only (page refresh clears it)
+    saveAdminKeyBtn.addEventListener("click", () => {
+      const key = adminKeyInput.value.trim();
+      if (!key) {
+        showMessage(adminKeyMessage, "Please enter a key.", "error");
+        return;
+      }
+      ADMIN_KEY_VALUE = key;
+      showMessage(adminKeyMessage, "Admin key set for this session.", "success");
+      loadSlots(); // auto-load slots when admin key set
+    });
+
+    async function loadSlots() {
+      if (!ADMIN_KEY_VALUE) {
+        showMessage(adminKeyMessage, "Set admin key first.", "error");
+        return;
+      }
+      showMessage(adminKeyMessage, "Loading slots...", "");
+      try {
+        const resp = await fetch("/admin/slots", {
+          headers: { "X-ADMIN-KEY": ADMIN_KEY_VALUE }
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+          showMessage(adminKeyMessage, data.message || "Failed to load slots.", "error");
+          return;
+        }
+        const slots = data.slots || [];
+        slotSelect.innerHTML = "";
+        if (!slots.length) {
+          slotSelect.innerHTML = '<option value="">No slots found</option>';
+          showMessage(adminKeyMessage, "No slots in settings/slots.", "error");
+          return;
+        }
+        slots.forEach((s) => {
+          const opt = document.createElement("option");
+          opt.value = s.id;
+          opt.textContent = `${s.name} (${s.id}) ${s.platform ? "[" + s.platform + "]" : ""}`;
+          slotSelect.appendChild(opt);
+        });
+        showMessage(adminKeyMessage, `Loaded ${slots.length} slots.`, "success");
+      } catch (err) {
+        console.error(err);
+        showMessage(adminKeyMessage, "Error loading slots.", "error");
+      }
+    }
+
+    // Generate slot-based code
+    genSlotCodeBtn.addEventListener("click", async () => {
+      if (!ADMIN_KEY_VALUE) {
+        showMessage(slotMessage, "Set admin key first.", "error");
+        return;
+      }
+      const slotId = slotSelect.value;
+      if (!slotId) {
+        showMessage(slotMessage, "Select a slot.", "error");
+        return;
+      }
+
+      const maxUses = parseInt(slotMaxUsesInput.value || "1", 10);
+      const expiresAt = formatDateTimeLocal(slotExpiresAtInput.value);
+      const customCode = slotCustomCodeInput.value.trim() || null;
+
+      showMessage(slotMessage, "Generating code...", "");
+      slotResult.style.display = "none";
+      genSlotCodeBtn.disabled = true;
+
+      try {
+        const resp = await fetch("/admin/gen-code", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-ADMIN-KEY": ADMIN_KEY_VALUE
+          },
+          body: JSON.stringify({
+            mode: "slot",
+            slotId,
+            maxUses,
+            expiresAt,
+            customCode
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+          showMessage(slotMessage, data.message || "Failed to generate code.", "error");
+          genSlotCodeBtn.disabled = false;
+          return;
+        }
+
+        const promo = data.promo;
+        showMessage(slotMessage, "Code generated successfully.", "success");
+        slotCodeEl.textContent = promo.code;
+        slotNameEl.textContent = promo.slot_name || promo.slot_id || "";
+        slotPlatformEl.textContent = promo.platform || "";
+        slotRawEl.textContent = JSON.stringify(promo, null, 2);
+        slotResult.style.display = "block";
+      } catch (err) {
+        console.error(err);
+        showMessage(slotMessage, "Server error.", "error");
+      } finally {
+        genSlotCodeBtn.disabled = false;
+      }
+    });
+
+    // Generate platform-based code
+    genPlatCodeBtn.addEventListener("click", async () => {
+      if (!ADMIN_KEY_VALUE) {
+        showMessage(platMessage, "Set admin key first.", "error");
+        return;
+      }
+      const platformName = platformNameInput.value.trim();
+      if (!platformName) {
+        showMessage(platMessage, "Enter a platform name.", "error");
+        return;
+      }
+
+      const maxUses = parseInt(platMaxUsesInput.value || "1", 10);
+      const expiresAt = formatDateTimeLocal(platExpiresAtInput.value);
+      const customCode = platCustomCodeInput.value.trim() || null;
+
+      showMessage(platMessage, "Generating code...", "");
+      platResult.style.display = "none";
+      genPlatCodeBtn.disabled = true;
+
+      try {
+        const resp = await fetch("/admin/gen-code", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-ADMIN-KEY": ADMIN_KEY_VALUE
+          },
+          body: JSON.stringify({
+            mode: "platform",
+            platform: platformName,
+            maxUses,
+            expiresAt,
+            customCode
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+          showMessage(platMessage, data.message || "Failed to generate code.", "error");
+          genPlatCodeBtn.disabled = false;
+          return;
+        }
+
+        const promo = data.promo;
+        showMessage(platMessage, "Code generated successfully.", "success");
+        platCodeEl.textContent = promo.code;
+        platPlatformEl.textContent = promo.platform || "";
+        platRawEl.textContent = JSON.stringify(promo, null, 2);
+        platResult.style.display = "block";
+      } catch (err) {
+        console.error(err);
+        showMessage(platMessage, "Server error.", "error");
+      } finally {
+        genPlatCodeBtn.disabled = false;
+      }
+    });
+
+    // Optional: auto-load slots on page load if you hardcode the admin key in JS (not recommended for security).
+    // For now we wait until admin clicks "Use This Key".
+  </script>
+</body>
+</html>
