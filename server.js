@@ -9,27 +9,30 @@ const {
   PORT = 3000,
   ADMIN_KEY,
   FIREBASE_DB_URL,
-  FIREBASE_PROJECT_ID,
-  FIREBASE_CLIENT_EMAIL,
-  FIREBASE_PRIVATE_KEY
+  FIREBASE_SERVICE_ACCOUNT
 } = process.env;
 
 // ---------- Firebase init ----------
-if (!FIREBASE_DB_URL || !FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
-  console.error("Missing Firebase env vars. Check .env");
+if (!FIREBASE_DB_URL || !FIREBASE_SERVICE_ACCOUNT) {
+  console.error("Missing FIREBASE_DB_URL or FIREBASE_SERVICE_ACCOUNT env vars. Check your config.");
+  process.exit(1);
+}
+
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(FIREBASE_SERVICE_ACCOUNT);
+} catch (e) {
+  console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT JSON:", e);
   process.exit(1);
 }
 
 admin.initializeApp({
-  credential: admin.credential.cert({
-    projectId: FIREBASE_PROJECT_ID,
-    clientEmail: FIREBASE_CLIENT_EMAIL,
-    privateKey: FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-  }),
+  credential: admin.credential.cert(serviceAccount),
   databaseURL: FIREBASE_DB_URL
 });
 
 const db = admin.database();
+
 
 // ---------- Express init ----------
 const app = express();
