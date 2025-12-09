@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OTT On Rent – Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      min-height: 100vh;
+      align-items: center;
+      justify-content: center;
+    }
+    .card {
+      background: #020617;
+      border-radius: 12px;
+      padding: 24px 20px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+      border: 1px solid #1e293b;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin: 0 0 4px;
+    }
+    p.subtitle {
+      margin: 0 0 20px;
+      font-size: 0.9rem;
+      color: #9ca3af;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      margin-bottom: 4px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #4b5563;
+      background: #020617;
+      color: #e5e7eb;
+      outline: none;
+      font-size: 0.95rem;
+    }
+    input[type="text"]:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px #38bdf8;
+    }
+    button {
+      margin-top: 14px;
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: none;
+      background: linear-gradient(135deg, #06b6d4, #3b82f6);
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+    .message {
+      margin-top: 12px;
+      font-size: 0.9rem;
+    }
+    .message.error {
+      color: #fca5a5;
+    }
+    .message.success {
+      color: #bbf7d0;
+    }
+    .result {
+      margin-top: 18px;
+      border-top: 1px solid #1f2937;
+      padding-top: 12px;
+      font-size: 0.9rem;
+    }
+    .item {
+      margin-bottom: 6px;
+    }
+    .label {
+      color: #9ca3af;
+    }
+    .value {
+      color: #e5e7eb;
+      font-weight: 500;
+    }
+    small {
+      font-size: 0.75rem;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Access Your Account</h1>
+    <p class="subtitle">
+      Enter your <strong>Order ID / Code</strong> (e.g. <code>OOR0YKAENP1GURS7</code>) to view your login details.
+    </p>
+
+    <form id="loginForm">
+      <label for="code">Order ID / Code</label>
+      <input id="code" name="code" type="text" required placeholder="OORXXXXXXXXXXXX" />
+      <button type="submit" id="submitBtn">View Details</button>
+    </form>
+
+    <div id="message" class="message"></div>
+
+    <div id="result" class="result" style="display:none;">
+      <div class="item">
+        <span class="label">Platform:</span>
+        <span class="value" id="platform"></span>
+      </div>
+      <div class="item">
+        <span class="label">Plan:</span>
+        <span class="value" id="slotName"></span>
+      </div>
+      <div class="item">
+        <span class="label">Email / Username:</span>
+        <span class="value" id="email"></span>
+      </div>
+      <div class="item">
+        <span class="label">Password:</span>
+        <span class="value" id="password"></span>
+      </div>
+      <div class="item">
+        <span class="label">Valid Till:</span>
+        <span class="value" id="endTime"></span>
+      </div>
+      <small id="meta"></small>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById("loginForm");
+    const messageEl = document.getElementById("message");
+    const resultEl = document.getElementById("result");
+    const submitBtn = document.getElementById("submitBtn");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const codeInput = document.getElementById("code");
+      const code = codeInput.value.trim();
+      if (!code) return;
+
+      messageEl.textContent = "";
+      messageEl.className = "message";
+      resultEl.style.display = "none";
+      submitBtn.disabled = true;
+
+      try {
+        const resp = await fetch("/user/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code })
+        });
+
+        const data = await resp.json();
+
+        if (!resp.ok || !data.success) {
+          messageEl.textContent = data.message || "Invalid or expired code.";
+          messageEl.className = "message error";
+          submitBtn.disabled = false;
+          return;
+        }
+
+        // Success
+        messageEl.textContent = "Login details loaded.";
+        messageEl.className = "message success";
+
+        document.getElementById("platform").textContent = data.platform || "-";
+        document.getElementById("slotName").textContent = data.slot_name || "-";
+        document.getElementById("email").textContent = data.last_email || "-";
+        document.getElementById("password").textContent = data.last_password || "-";
+        document.getElementById("endTime").textContent = data.end_time || "-";
+        document.getElementById("meta").textContent =
+          "Code: " + (data.code || "") + " • User ID: " + (data.user_id || "N/A");
+
+        resultEl.style.display = "block";
+      } catch (err) {
+        console.error(err);
+        messageEl.textContent = "Server error. Please try again later.";
+        messageEl.className = "message error";
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
