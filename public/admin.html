@@ -101,7 +101,7 @@
     .result {
       font-size: 0.9rem;
       margin-top: 8px;
-      border-top: 1px solid #1e293b;
+      border-top: 1px solid #1e2937;
       padding-top: 8px;
     }
     pre {
@@ -128,8 +128,7 @@
   <div class="container">
     <h1>Admin Panel</h1>
     <p class="subtitle">
-      Generate <strong>platform-based</strong> and <strong>slot-based</strong> codes exactly like your Telegram bot.<br />
-      This talks directly to the same Firebase database.
+      Generate <strong>slot-based</strong> and <strong>platform-based</strong> promo codes exactly like your Telegram bot.
     </p>
 
     <!-- Admin key card -->
@@ -251,11 +250,9 @@
 
     function formatDateTimeLocal(value) {
       if (!value) return null;
-      // value like "2025-12-31T23:59"
-      // convert to ISO with local timezone as text
       const d = new Date(value);
       if (isNaN(d.getTime())) return null;
-      return d.toISOString(); // or keep as is if you prefer
+      return d.toISOString();
     }
 
     function showMessage(el, text, type = "") {
@@ -263,7 +260,6 @@
       el.className = "message" + (type ? " " + type : "");
     }
 
-    // Save admin key in memory only (page refresh clears it)
     saveAdminKeyBtn.addEventListener("click", () => {
       const key = adminKeyInput.value.trim();
       if (!key) {
@@ -272,7 +268,7 @@
       }
       ADMIN_KEY_VALUE = key;
       showMessage(adminKeyMessage, "Admin key set for this session.", "success");
-      loadSlots(); // auto-load slots when admin key set
+      loadSlots();
     });
 
     async function loadSlots() {
@@ -297,7 +293,7 @@
           showMessage(adminKeyMessage, "No slots in settings/slots.", "error");
           return;
         }
-        slots.forEach((s) => {
+        slots.forEach(s => {
           const opt = document.createElement("option");
           opt.value = s.id;
           opt.textContent = `${s.name} (${s.id}) ${s.platform ? "[" + s.platform + "]" : ""}`;
@@ -310,7 +306,6 @@
       }
     }
 
-    // Generate slot-based code
     genSlotCodeBtn.addEventListener("click", async () => {
       if (!ADMIN_KEY_VALUE) {
         showMessage(slotMessage, "Set admin key first.", "error");
@@ -338,7 +333,6 @@
             "X-ADMIN-KEY": ADMIN_KEY_VALUE
           },
           body: JSON.stringify({
-            mode: "slot",
             slotId,
             maxUses,
             expiresAt,
@@ -354,9 +348,9 @@
 
         const promo = data.promo;
         showMessage(slotMessage, "Code generated successfully.", "success");
-        slotCodeEl.textContent = promo.code;
+        slotCodeEl.textContent = data.code;
         slotNameEl.textContent = promo.slot_name || promo.slot_id || "";
-        slotPlatformEl.textContent = promo.platform || "";
+        slotPlatformEl.textContent = ""; // you can fill if needed
         slotRawEl.textContent = JSON.stringify(promo, null, 2);
         slotResult.style.display = "block";
       } catch (err) {
@@ -367,7 +361,6 @@
       }
     });
 
-    // Generate platform-based code
     genPlatCodeBtn.addEventListener("click", async () => {
       if (!ADMIN_KEY_VALUE) {
         showMessage(platMessage, "Set admin key first.", "error");
@@ -395,7 +388,7 @@
             "X-ADMIN-KEY": ADMIN_KEY_VALUE
           },
           body: JSON.stringify({
-            mode: "platform",
+            mode: "platform",   // you can extend server to accept mode, or ignore this
             platform: platformName,
             maxUses,
             expiresAt,
@@ -409,10 +402,10 @@
           return;
         }
 
-        const promo = data.promo;
+        const promo = data.promo || {};
         showMessage(platMessage, "Code generated successfully.", "success");
-        platCodeEl.textContent = promo.code;
-        platPlatformEl.textContent = promo.platform || "";
+        platCodeEl.textContent = data.code;
+        platPlatformEl.textContent = platformName;
         platRawEl.textContent = JSON.stringify(promo, null, 2);
         platResult.style.display = "block";
       } catch (err) {
@@ -422,9 +415,6 @@
         genPlatCodeBtn.disabled = false;
       }
     });
-
-    // Optional: auto-load slots on page load if you hardcode the admin key in JS (not recommended for security).
-    // For now we wait until admin clicks "Use This Key".
   </script>
 </body>
 </html>
